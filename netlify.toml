@@ -1,9 +1,37 @@
 [build]
   command = "npm install"
   functions = "netlify/functions"
+  
+[build.environment]
+  NODE_VERSION = "18"
 
-[functions]
+[[functions]]
+  path = "netlify/functions/*"
   node_bundler = "esbuild"
 
-[[plugins]]
-  package = "@netlify/plugin-functions-install-core"
+[functions]
+  external_node_modules = ["discord.js", "axios", "node-fetch"]
+
+# Configuración para manejo de errores
+[[headers]]
+  for = "/.netlify/functions/*"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"
+    Access-Control-Allow-Headers = "Content-Type"
+    Access-Control-Allow-Methods = "GET, POST, PUT, DELETE"
+
+# Configuración de redirects para mantener las funciones activas
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/health"
+  to = "/.netlify/functions/keep-alive"
+  status = 200
+
+[[redirects]]
+  from = "/bot/start"
+  to = "/.netlify/functions/start-bot"
+  status = 200
