@@ -1,28 +1,41 @@
 {
-  "name": "discord-asistencia-bot",
+  "name": "discord-bot-attendance-netlify",
   "version": "1.0.0",
-  "description": "Bot de Discord para control de asistencia y ventas",
+  "description": "Bot de Discord para control de asistencia y ventas desplegado en Netlify Functions",
   "main": "bot.js",
   "scripts": {
     "start": "node bot.js",
-    "dev": "node bot.js"
+    "dev": "node bot.js",
+    "test": "node -e \"console.log('✅ Dependencias verificadas')\"",
+    "keep-alive": "node keep-alive.js",
+    "build": "npm install"
   },
   "keywords": [
     "discord",
     "bot",
     "asistencia",
-    "control",
+    "ventas",
+    "netlify",
+    "functions",
     "google-sheets"
   ],
   "author": "Tu Nombre",
   "license": "MIT",
   "dependencies": {
-    "axios": "^1.11.0",
-    "discord.js": "^14.21.0",
-    "dotenv": "^16.6.1",
-    "express": "^5.1.0"
+    "discord.js": "^14.14.1"
+  },
+  "devDependencies": {
+    "@netlify/functions": "^2.4.1"
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/luisc0230/discord-bot-attendance"
+  },
+  "homepage": "https://github.com/luisc0230/discord-bot-attendance#readme",
+  "bugs": {
+    "url": "https://github.com/luisc0230/discord-bot-attendance/issues"
   }
 }

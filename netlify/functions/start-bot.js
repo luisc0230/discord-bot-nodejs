@@ -1,5 +1,4 @@
 const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
-const axios = require('axios');
 
 let client = null;
 let isConnecting = false;
@@ -12,30 +11,46 @@ exports.handler = async (event, context) => {
 
     // Si ya está conectado, devolver estado
     if (client && client.isReady()) {
+      console.log(`✅ Bot ya está funcionando: ${client.user.tag}`);
       return {
         statusCode: 200,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache'
+        },
         body: JSON.stringify({
           status: 'Bot ya está funcionando',
           user: client.user.tag,
           guilds: client.guilds.cache.size,
           uptime: Math.floor(process.uptime()),
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          requestId: context.awsRequestId
         })
       };
     }
 
     // Evitar múltiples conexiones simultáneas
     if (isConnecting) {
+      console.log('🔄 Bot conectándose...');
       return {
         statusCode: 200,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*'
+        },
         body: JSON.stringify({
           status: 'Bot conectándose...',
           message: 'Conexión en proceso',
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          requestId: context.awsRequestId
         })
       };
+    }
+
+    // Verificar token
+    if (!process.env.DISCORD_TOKEN) {
+      throw new Error('DISCORD_TOKEN no configurado');
     }
 
     // Crear cliente si no existe
@@ -55,8 +70,13 @@ exports.handler = async (event, context) => {
       // Configurar eventos del bot
       setupBotEvents(client);
 
-      // Conectar a Discord
-      await client.login(process.env.DISCORD_TOKEN);
+      // Conectar a Discord con timeout
+      const connectPromise = client.login(process.env.DISCORD_TOKEN);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Login timeout')), 15000)
+      );
+
+      await Promise.race([connectPromise, timeoutPromise]);
       isConnecting = false;
       
       console.log('✅ Cliente conectado exitosamente');
@@ -64,12 +84,17 @@ exports.handler = async (event, context) => {
 
     return {
       statusCode: 200,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'no-cache'
+      },
       body: JSON.stringify({
         status: 'Bot iniciado exitosamente',
         user: client.user?.tag || 'Conectando...',
         guilds: client.guilds?.cache.size || 0,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        requestId: context.awsRequestId
       })
     };
 
@@ -79,11 +104,15 @@ exports.handler = async (event, context) => {
     
     return {
       statusCode: 500,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*'
+      },
       body: JSON.stringify({
         status: 'Error',
         error: error.message,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        requestId: context.awsRequestId
       })
     };
   }
@@ -104,7 +133,7 @@ function setupBotEvents(client) {
     const content = message.content.toLowerCase();
     
     if (content === '!setup_attendance' || content === '!setup') {
-      if (!message.member.permissions.has('ADMINISTRATOR')) {
+      if (!message.member?.permissions.has('Administrator')) {
         return message.reply('❌ Necesitas permisos de administrador para usar este comando.');
       }
       await setupAttendancePanel(message);
@@ -380,18 +409,29 @@ async function sendToGoogleSheets(user, action, guild, channel, ventasData = nul
       ...ventasData
     };
 
-    const response = await axios.post(GOOGLE_SHEETS_WEBHOOK_URL, data, {
+    // Usar fetch nativo en lugar de axios
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+    const response = await fetch(GOOGLE_SHEETS_WEBHOOK_URL, {
+      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      timeout: 10000
+      body: JSON.stringify(data),
+      signal: controller.signal
     });
 
-    if (response.status === 200 && response.data.result === 'success') {
-      console.log(`✅ Enviado a Google Sheets: ${user.username} - ${action}`);
-      return true;
-    } else {
-      console.error('❌ Error respuesta Google Sheets:', response.data);
-      return false;
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      const result = await response.json();
+      if (result.result === 'success') {
+        console.log(`✅ Enviado a Google Sheets: ${user.username} - ${action}`);
+        return true;
+      }
     }
+    
+    console.error('❌ Error respuesta Google Sheets:', response.status);
+    return false;
 
   } catch (error) {
     console.error('❌ Error enviando a Google Sheets:', error.message);
