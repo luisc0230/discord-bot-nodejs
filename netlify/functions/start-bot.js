@@ -10,6 +10,7 @@ function markActivity() {
   lastActivity = Date.now();
 }
 
+// HANDLER PRINCIPAL - DEBE SER LA PRIMERA EXPORTACIÓN
 exports.handler = async (event, context) => {
   context.callbackWaitsForEmptyEventLoop = false;
   markActivity();
@@ -601,6 +602,3 @@ async function showStatus(message) {
     await message.reply('❌ Error mostrando el estado.').catch(() => {});
   }
 }
-
-// Exportar cliente para otras funciones
-module.exports = { client };
