@@ -19,6 +19,11 @@
 
 # Configuración de redirects para mantener las funciones activas
 [[redirects]]
+  from = "/logs"
+  to = "/.netlify/functions/logs"
+  status = 200
+
+[[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/:splat"
   status = 200
@@ -32,3 +37,4 @@
   from = "/bot/start"
   to = "/.netlify/functions/start-bot"
   status = 200
+
