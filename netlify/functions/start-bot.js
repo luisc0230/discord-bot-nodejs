@@ -1,604 +1,456 @@
 const { Client, GatewayIntentBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 
-// Cliente global para persistencia
-let client = null;
-let isConnecting = false;
-let lastActivity = Date.now();
+// Cliente global - SOLO UNA INSTANCIA
+let globalClient = null;
+let isInitializing = false;
 
-// Marcar actividad para keep-alive
-function markActivity() {
-  lastActivity = Date.now();
-}
-
-// HANDLER PRINCIPAL - DEBE SER LA PRIMERA EXPORTACIÓN
+// Función principal de Netlify
 exports.handler = async (event, context) => {
   context.callbackWaitsForEmptyEventLoop = false;
-  markActivity();
-
+  
   try {
-    console.log('🚀 Función start-bot ejecutada...');
-
-    // Si ya está conectado y funcionando, devolver estado
-    if (client && client.isReady()) {
-      console.log(`✅ Bot ya funcionando: ${client.user.tag}`);
-      return {
-        statusCode: 200,
-        headers: { 
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
-          'Cache-Control': 'no-cache'
-        },
-        body: JSON.stringify({
-          status: 'Bot ya está funcionando',
-          user: client.user.tag,
-          guilds: client.guilds.cache.size,
-          uptime: Math.floor((Date.now() - (client.readyTimestamp || Date.now())) / 1000),
-          lastActivity: new Date(lastActivity).toISOString(),
-          timestamp: new Date().toISOString(),
-          requestId: context.awsRequestId
-        })
-      };
+    console.log('🚀 Start-bot function called');
+    
+    // Si el cliente ya existe y está listo, devolverlo
+    if (globalClient && globalClient.isReady()) {
+      console.log(`✅ Bot already running: ${globalClient.user.tag}`);
+      return successResponse({
+        status: 'Bot already running',
+        user: globalClient.user.tag,
+        guilds: globalClient.guilds.cache.size,
+        uptime: Math.floor((Date.now() - globalClient.readyTimestamp) / 1000)
+      });
     }
-
-    // Evitar múltiples conexiones simultáneas
-    if (isConnecting) {
-      console.log('🔄 Bot ya está conectándose...');
-      return {
-        statusCode: 200,
-        headers: { 
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*'
-        },
-        body: JSON.stringify({
-          status: 'Bot conectándose...',
-          message: 'Conexión en proceso, espera unos segundos',
-          timestamp: new Date().toISOString(),
-          requestId: context.awsRequestId
-        })
-      };
+    
+    // Si ya se está inicializando, esperar
+    if (isInitializing) {
+      console.log('🔄 Already initializing...');
+      return successResponse({
+        status: 'Bot initializing',
+        message: 'Wait a moment, bot is starting up'
+      });
     }
-
+    
     // Verificar token
     if (!process.env.DISCORD_TOKEN) {
-      throw new Error('DISCORD_TOKEN no está configurado en las variables de entorno');
+      throw new Error('DISCORD_TOKEN not configured');
     }
-
-    console.log('🔧 Iniciando nueva conexión del bot...');
-    isConnecting = true;
-
-    try {
-      // Crear nuevo cliente
-      client = new Client({
-        intents: [
-          GatewayIntentBits.Guilds,
-          GatewayIntentBits.GuildMessages,
-          GatewayIntentBits.MessageContent,
-          GatewayIntentBits.GuildMembers
-        ]
-      });
-
-      // Configurar eventos ANTES de conectar
-      setupBotEvents(client);
-
-      // Conectar con timeout
-      console.log('🔗 Conectando a Discord...');
-      await client.login(process.env.DISCORD_TOKEN);
-      
-      // Esperar hasta que esté completamente listo
-      await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          reject(new Error('Timeout esperando ready event'));
-        }, 15000);
-
-        client.once('ready', () => {
-          clearTimeout(timeout);
-          resolve();
-        });
-      });
-
-      isConnecting = false;
-      console.log(`✅ Bot conectado exitosamente como ${client.user.tag}`);
-
-      return {
-        statusCode: 200,
-        headers: { 
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
-          'Cache-Control': 'no-cache'
-        },
-        body: JSON.stringify({
-          status: 'Bot iniciado exitosamente',
-          user: client.user.tag,
-          guilds: client.guilds.cache.size,
-          timestamp: new Date().toISOString(),
-          message: 'Bot listo para usar. Los botones deberían funcionar ahora.',
-          requestId: context.awsRequestId
-        })
-      };
-
-    } catch (loginError) {
-      isConnecting = false;
-      console.error('❌ Error en login:', loginError);
-      throw loginError;
-    }
-
-  } catch (error) {
-    console.error('❌ Error en start-bot:', error);
-    isConnecting = false;
     
-    return {
-      statusCode: 500,
-      headers: { 
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*'
-      },
-      body: JSON.stringify({
-        status: 'Error iniciando bot',
-        error: error.message,
-        timestamp: new Date().toISOString(),
-        requestId: context.awsRequestId,
-        troubleshooting: 'Verifica el token de Discord y vuelve a intentar'
-      })
-    };
+    // Inicializar bot
+    console.log('🔧 Initializing Discord bot...');
+    isInitializing = true;
+    
+    globalClient = new Client({
+      intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent
+      ]
+    });
+    
+    // Configurar eventos básicos
+    setupEvents(globalClient);
+    
+    // Login
+    await globalClient.login(process.env.DISCORD_TOKEN);
+    
+    // Esperar ready con timeout
+    await waitForReady(globalClient, 10000);
+    
+    isInitializing = false;
+    console.log(`✅ Bot ready: ${globalClient.user.tag}`);
+    
+    return successResponse({
+      status: 'Bot started successfully',
+      user: globalClient.user.tag,
+      guilds: globalClient.guilds.cache.size,
+      message: 'Bot is now ready to handle interactions'
+    });
+    
+  } catch (error) {
+    console.error('❌ Error in start-bot:', error);
+    isInitializing = false;
+    
+    return errorResponse(error.message);
   }
 };
 
-function setupBotEvents(client) {
-  // Evento ready
+function setupEvents(client) {
+  // Ready event
   client.once('ready', () => {
-    console.log(`✅ Bot listo: ${client.user.tag}`);
-    console.log(`🏠 Conectado a ${client.guilds.cache.size} servidor(es)`);
-    
-    // Establecer actividad
-    client.user.setActivity('Control de Asistencia 24/7', { type: 'WATCHING' });
-    markActivity();
+    console.log(`✅ Discord bot ready: ${client.user.tag}`);
+    client.user.setActivity('Sistema de Asistencia', { type: 'WATCHING' });
   });
-
-  // Comandos de mensaje
+  
+  // Message commands
   client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
-    markActivity();
     
     const content = message.content.toLowerCase().trim();
     
-    try {
-      if (content === '!setup_attendance' || content === '!setup') {
-        if (!message.member?.permissions.has('Administrator')) {
-          return await message.reply('❌ Necesitas permisos de administrador para usar este comando.');
-        }
-        await setupAttendancePanel(message);
+    if (content === '!setup' || content === '!setup_attendance') {
+      if (!message.member?.permissions.has('Administrator')) {
+        return message.reply('❌ Se requieren permisos de administrador.');
       }
-      
-      if (content === '!status') {
-        await showStatus(message);
-      }
-
-      if (content === '!ping') {
-        const start = Date.now();
-        const msg = await message.reply('🏓 Calculando ping...');
-        const latency = Date.now() - start;
-        await msg.edit(`🏓 Pong! Latencia: ${latency}ms | WebSocket: ${Math.round(client.ws.ping)}ms`);
-      }
-    } catch (error) {
-      console.error('❌ Error en comando:', error);
-      await message.reply('❌ Error procesando el comando. Verifica los logs.').catch(() => {});
-    }
-  });
-
-  // Manejo de interacciones de botones y modales
-  client.on('interactionCreate', async (interaction) => {
-    markActivity();
-    
-    try {
-      console.log(`🎯 Interacción recibida: ${interaction.type} - ${interaction.customId || 'N/A'}`);
-      
-      if (interaction.isButton()) {
-        await handleButtonInteraction(interaction);
-      } else if (interaction.isModalSubmit()) {
-        await handleModalSubmit(interaction);
-      }
-    } catch (error) {
-      console.error('❌ Error en interacción:', error);
       
       try {
-        const errorMessage = '❌ Error procesando la interacción. Inténtalo nuevamente en unos segundos.';
+        await setupPanel(message);
+      } catch (error) {
+        console.error('❌ Error en setup:', error);
+        message.reply('❌ Error configurando el panel.').catch(() => {});
+      }
+    }
+    
+    if (content === '!status') {
+      try {
+        await message.reply(`✅ Bot funcionando: ${client.user.tag} | ${client.guilds.cache.size} servidores`);
+      } catch (error) {
+        console.error('❌ Error en status:', error);
+      }
+    }
+  });
+  
+  // Interaction handler - CLAVE PARA LOS BOTONES
+  client.on('interactionCreate', async (interaction) => {
+    try {
+      console.log(`🎯 Interaction: ${interaction.type} - ${interaction.customId || 'none'}`);
+      
+      if (interaction.isButton()) {
+        await handleButton(interaction);
+      } else if (interaction.isModalSubmit()) {
+        await handleModal(interaction);
+      }
+      
+    } catch (error) {
+      console.error('❌ Interaction error:', error);
+      
+      // Intentar responder con error
+      try {
+        const errorMsg = '❌ Error procesando. Intenta nuevamente.';
         
-        if (interaction.replied || interaction.deferred) {
-          await interaction.followup.send({ content: errorMessage, ephemeral: true });
+        if (!interaction.replied && !interaction.deferred) {
+          await interaction.reply({ content: errorMsg, ephemeral: true });
         } else {
-          await interaction.reply({ content: errorMessage, ephemeral: true });
+          await interaction.followup.send({ content: errorMsg, ephemeral: true });
         }
       } catch (replyError) {
-        console.error('❌ No se pudo enviar mensaje de error:', replyError);
+        console.error('❌ Could not send error reply:', replyError);
       }
     }
   });
-
-  // Manejo de errores
-  client.on('error', error => {
-    console.error('❌ Error del cliente Discord:', error);
+  
+  // Error handling
+  client.on('error', (error) => {
+    console.error('❌ Discord client error:', error);
   });
-
-  client.on('warn', info => {
-    console.warn('⚠️ Advertencia Discord:', info);
-  });
-
-  // Reconexión automática
-  client.on('disconnect', () => {
-    console.warn('⚠️ Bot desconectado. Intentando reconectar...');
+  
+  client.on('warn', (info) => {
+    console.warn('⚠️ Discord warning:', info);
   });
 }
 
-async function setupAttendancePanel(message) {
-  try {
-    const embed = new EmbedBuilder()
-      .setTitle('🕐 SISTEMA DE CONTROL DE ASISTENCIA')
-      .setDescription('**Registra tus eventos de trabajo con un solo clic:**')
-      .setColor(0xffd700)
-      .addFields([
-        {
-          name: '🟢 LOGIN - Entrada/Inicio de jornada',
-          value: 'Presionarlo **apenas empieces tu turno** de trabajo.\nDebe ser lo **primero que hagas** al conectarte.\n⚠️ Si lo haces tarde, el sistema te registrará como **"Tarde"**.',
-          inline: false
-        },
-        {
-          name: '⏸️ BREAK - Inicio de pausa/descanso',
-          value: 'Presionarlo **cada vez que te ausentes** del puesto (baño, comer, personal).\n❌ **No usarlo** si vas a estar solo 1-2 minutos.\n✅ **Solo para pausas de más de 5 minutos**.',
-          inline: false
-        },
-        {
-          name: '▶️ LOGOUT BREAK - Fin de pausa/vuelta al trabajo',
-          value: 'Presionarlo **apenas vuelvas** de la pausa.\nEsto marca que estás **nuevamente disponible y activo**.',
-          inline: false
-        },
-        {
-          name: '🔴 LOGOUT - Salida/Fin de jornada + Reporte de Ventas',
-          value: 'Presionarlo **al finalizar** tu turno.\n📋 **Se abrirá un formulario** para reportar ventas del día.\n⚠️ **OBLIGATORIO** completar el reporte de ventas.',
-          inline: false
-        },
-        {
-          name: '📋 REGLAS IMPORTANTES',
-          value: '• Los botones se deben usar en **orden lógico**: `Login → Break → Logout Break → Logout`\n• **No marcar** un Break sin luego marcar un Logout Break\n• **El Logout incluye** el reporte obligatorio de ventas\n• Usar siempre desde el **mismo dispositivo** y cuenta de Discord asignada\n• **Activa los mensajes directos** para recibir confirmaciones',
-          inline: false
-        }
-      ])
-      .setFooter({ 
-        text: '📧 Las confirmaciones llegan por DM | ⏰ Hora de Lima | 📊 Una fila por usuario',
-        iconURL: message.guild?.iconURL() || null
-      })
-      .setTimestamp();
-
-    const row = new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId('attendance_login')
-          .setLabel('🟢 Login')
-          .setStyle(ButtonStyle.Success),
-        new ButtonBuilder()
-          .setCustomId('attendance_break')
-          .setLabel('⏸️ Break')
-          .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-          .setCustomId('attendance_logout_break')
-          .setLabel('▶️ Logout Break')
-          .setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder()
-          .setCustomId('attendance_logout')
-          .setLabel('🔴 Logout')
-          .setStyle(ButtonStyle.Danger)
-      );
-
-    await message.channel.send({ embeds: [embed], components: [row] });
-    
-    // Eliminar comando para mantener limpio
-    try {
-      await message.delete();
-    } catch (error) {
-      console.warn('⚠️ No se pudo eliminar el mensaje de comando');
-    }
-
-    console.log('✅ Panel de asistencia configurado exitosamente');
-  } catch (error) {
-    console.error('❌ Error configurando panel:', error);
-    await message.reply('❌ Error configurando el panel de asistencia.').catch(() => {});
-  }
-}
-
-async function handleButtonInteraction(interaction) {
-  const { customId, user, guild, channel } = interaction;
-  console.log(`🔘 Botón presionado: ${customId} por ${user.username}`);
+async function setupPanel(message) {
+  const embed = new EmbedBuilder()
+    .setTitle('🕐 SISTEMA DE CONTROL DE ASISTENCIA')
+    .setDescription('**Registra tus eventos de trabajo:**')
+    .setColor(0xffd700)
+    .addFields([
+      {
+        name: '🟢 LOGIN',
+        value: 'Inicio de jornada laboral',
+        inline: true
+      },
+      {
+        name: '⏸️ BREAK',
+        value: 'Inicio de pausa/descanso',
+        inline: true
+      },
+      {
+        name: '▶️ LOGOUT BREAK',
+        value: 'Fin de pausa',
+        inline: true
+      },
+      {
+        name: '🔴 LOGOUT',
+        value: 'Fin de jornada + reporte ventas',
+        inline: false
+      }
+    ]);
+  
+  const buttons = new ActionRowBuilder()
+    .addComponents(
+      new ButtonBuilder()
+        .setCustomId('login')
+        .setLabel('🟢 Login')
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId('break')
+        .setLabel('⏸️ Break')
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId('logout_break')
+        .setLabel('▶️ Logout Break')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId('logout')
+        .setLabel('🔴 Logout')
+        .setStyle(ButtonStyle.Danger)
+    );
+  
+  await message.channel.send({ embeds: [embed], components: [buttons] });
   
   try {
-    if (customId === 'attendance_logout') {
-      // Modal para logout con ventas
-      const modal = new ModalBuilder()
-        .setCustomId('logout_ventas_modal')
-        .setTitle('LOGOUT - REPORTE DE VENTAS');
-
-      const modeloInput = new TextInputBuilder()
-        .setCustomId('modelo')
-        .setLabel('MODELO')
-        .setPlaceholder('Ingresa el modelo trabajado...')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true)
-        .setMaxLength(100);
-
-      const montoBrutoInput = new TextInputBuilder()
-        .setCustomId('monto_bruto')
-        .setLabel('Monto Bruto:')
-        .setPlaceholder('Ejemplo: 150.50')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true)
-        .setMaxLength(20);
-
-      const fansSuscritosInput = new TextInputBuilder()
-        .setCustomId('fans_suscritos')
-        .setLabel('Fans Suscritos:')
-        .setPlaceholder('Ejemplo: 25')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true)
-        .setMaxLength(20);
-
-      const row1 = new ActionRowBuilder().addComponents(modeloInput);
-      const row2 = new ActionRowBuilder().addComponents(montoBrutoInput);
-      const row3 = new ActionRowBuilder().addComponents(fansSuscritosInput);
-
-      modal.addComponents(row1, row2, row3);
-      await interaction.showModal(modal);
-      return;
-    }
-
-    // Mapeo de otros botones
-    const actionMap = {
-      'attendance_login': { action: 'login', emoji: '🟢', name: 'Login', color: 0x00ff00 },
-      'attendance_break': { action: 'break', emoji: '⏸️', name: 'Break', color: 0x0099ff },
-      'attendance_logout_break': { action: 'logout_break', emoji: '▶️', name: 'Logout Break', color: 0x9900ff }
-    };
-
-    const config = actionMap[customId];
-    if (!config) {
-      console.warn(`⚠️ CustomId desconocido: ${customId}`);
-      return;
-    }
-
-    // Respuesta inmediata
-    await interaction.reply({
-      content: `${config.emoji} **${config.name}** procesando...`,
-      ephemeral: true
-    });
-
-    // Enviar a Google Sheets
-    const success = await sendToGoogleSheets(user, config.action, guild, channel);
-    
-    // Crear embed de confirmación
-    const embed = new EmbedBuilder()
-      .setTitle(`${config.emoji} ${config.name} Registrado`)
-      .setDescription(`**${config.name} registrado exitosamente**`)
-      .setColor(config.color)
-      .addFields([
-        { name: '👤 Usuario', value: `<@${user.id}>`, inline: true },
-        { name: '⏰ Hora (Lima)', value: `\`${new Date().toLocaleString('es-PE', { timeZone: 'America/Lima' })}\``, inline: true }
-      ])
-      .setTimestamp();
-
-    if (success) {
-      embed.setFooter({ text: '✅ Registro actualizado en Google Sheets' });
-    } else {
-      embed.setFooter({ text: '⚠️ Error guardando en Google Sheets' });
-    }
-
-    const dmMessage = `${config.emoji} **${config.name}** registrado ${success ? 'exitosamente' : 'localmente'}.`;
-
-    // Enviar por DM
-    try {
-      await user.send({ content: dmMessage, embeds: [embed] });
-      await interaction.editReply({
-        content: `${config.emoji} **${config.name}** registrado exitosamente. Confirmación enviada por DM.`
-      });
-    } catch (dmError) {
-      console.warn('⚠️ No se pudo enviar DM:', dmError.message);
-      await interaction.editReply({
-        content: `${config.emoji} **${config.name}** registrado exitosamente.\n💡 Activa los DMs para recibir confirmaciones privadas.`
-      });
-    }
-
-    console.log(`✅ ${config.name} registrado para ${user.username}`);
-
+    await message.delete();
   } catch (error) {
-    console.error(`❌ Error en botón ${customId}:`, error);
-    
-    try {
-      if (!interaction.replied && !interaction.deferred) {
-        await interaction.reply({
-          content: `❌ Error procesando **${customId}**. Inténtalo nuevamente.`,
-          ephemeral: true
-        });
-      }
-    } catch (replyError) {
-      console.error('❌ Error enviando respuesta de error:', replyError);
-    }
+    console.warn('Could not delete setup command');
   }
 }
 
-async function handleModalSubmit(interaction) {
-  if (interaction.customId !== 'logout_ventas_modal') return;
-
-  try {
-    console.log(`📝 Modal de ventas enviado por ${interaction.user.username}`);
+async function handleButton(interaction) {
+  const { customId, user } = interaction;
+  console.log(`🔘 Button pressed: ${customId} by ${user.username}`);
+  
+  // LOGOUT - mostrar modal
+  if (customId === 'logout') {
+    const modal = new ModalBuilder()
+      .setCustomId('logout_modal')
+      .setTitle('LOGOUT - Reporte de Ventas');
     
-    // Respuesta inmediata
+    const modeloInput = new TextInputBuilder()
+      .setCustomId('modelo')
+      .setLabel('Modelo trabajado')
+      .setPlaceholder('Nombre del modelo...')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true);
+    
+    const montoInput = new TextInputBuilder()
+      .setCustomId('monto')
+      .setLabel('Monto Bruto ($)')
+      .setPlaceholder('150.50')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true);
+    
+    const fansInput = new TextInputBuilder()
+      .setCustomId('fans')
+      .setLabel('Fans Suscritos')
+      .setPlaceholder('25')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true);
+    
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(modeloInput),
+      new ActionRowBuilder().addComponents(montoInput),
+      new ActionRowBuilder().addComponents(fansInput)
+    );
+    
+    await interaction.showModal(modal);
+    return;
+  }
+  
+  // Otros botones (LOGIN, BREAK, LOGOUT_BREAK)
+  const actions = {
+    'login': { emoji: '🟢', name: 'Login', action: 'login' },
+    'break': { emoji: '⏸️', name: 'Break', action: 'break' },
+    'logout_break': { emoji: '▶️', name: 'Logout Break', action: 'logout_break' }
+  };
+  
+  const config = actions[customId];
+  if (!config) {
+    console.warn(`Unknown button: ${customId}`);
+    return;
+  }
+  
+  // Respuesta inmediata
+  await interaction.reply({
+    content: `${config.emoji} **${config.name}** registrando...`,
+    ephemeral: true
+  });
+  
+  // Enviar a Google Sheets
+  const success = await sendToSheets(user, config.action, interaction.guild, interaction.channel);
+  
+  // Respuesta final
+  const embed = new EmbedBuilder()
+    .setTitle(`${config.emoji} ${config.name} Registrado`)
+    .setColor(0x00ff00)
+    .addFields([
+      { name: 'Usuario', value: user.username, inline: true },
+      { name: 'Hora', value: new Date().toLocaleString('es-PE', { timeZone: 'America/Lima' }), inline: true }
+    ]);
+  
+  if (success) {
+    embed.setFooter({ text: '✅ Guardado en Google Sheets' });
+  } else {
+    embed.setFooter({ text: '⚠️ Error con Google Sheets' });
+  }
+  
+  await interaction.editReply({ content: `${config.emoji} **${config.name}** registrado`, embeds: [embed] });
+  
+  // Enviar DM
+  try {
+    await user.send({ content: `${config.emoji} **${config.name}** registrado exitosamente`, embeds: [embed] });
+  } catch (dmError) {
+    console.warn('Could not send DM to user');
+  }
+}
+
+async function handleModal(interaction) {
+  if (interaction.customId !== 'logout_modal') return;
+  
+  try {
+    console.log(`📝 Logout modal from ${interaction.user.username}`);
+    
     await interaction.reply({
-      content: '🔴 **Procesando logout y reporte de ventas...** ⏳',
+      content: '🔴 **Procesando logout y ventas...**',
       ephemeral: true
     });
-
-    // Obtener datos del modal
+    
     const modelo = interaction.fields.getTextInputValue('modelo');
-    const montoBrutoStr = interaction.fields.getTextInputValue('monto_bruto').replace(/[$,]/g, '').trim();
-    const fansSuscritosStr = interaction.fields.getTextInputValue('fans_suscritos').replace(/[#,]/g, '').trim();
-
-    // Validaciones
-    const montoBruto = parseFloat(montoBrutoStr);
-    if (isNaN(montoBruto) || montoBruto < 0) {
-      await interaction.editReply({ 
-        content: '❌ **Error**: El monto bruto debe ser un número válido mayor o igual a 0.' 
-      });
+    const montoStr = interaction.fields.getTextInputValue('monto').replace(/[$,]/g, '');
+    const fansStr = interaction.fields.getTextInputValue('fans').replace(/[#,]/g, '');
+    
+    const monto = parseFloat(montoStr);
+    const fans = parseInt(fansStr);
+    
+    if (isNaN(monto) || monto < 0) {
+      await interaction.editReply({ content: '❌ Monto inválido' });
       return;
     }
-
-    const montoNeto = montoBruto * 0.80;
-
-    const fansSuscritos = parseInt(fansSuscritosStr);
-    if (isNaN(fansSuscritos) || fansSuscritos < 0) {
-      await interaction.editReply({ 
-        content: '❌ **Error**: Los fans suscritos deben ser un número entero mayor o igual a 0.' 
-      });
+    
+    if (isNaN(fans) || fans < 0) {
+      await interaction.editReply({ content: '❌ Fans inválidos' });
       return;
     }
-
-    // Datos de ventas
-    const ventasData = { 
-      modelo, 
-      monto_bruto: montoBruto, 
-      monto_neto: montoNeto, 
-      fans_suscritos: fansSuscritos 
+    
+    const montoNeto = monto * 0.8;
+    
+    const ventasData = {
+      modelo,
+      monto_bruto: monto,
+      monto_neto: montoNeto,
+      fans_suscritos: fans
     };
-
-    // Enviar a Google Sheets
-    const success = await sendToGoogleSheets(
-      interaction.user,
-      'logout',
-      interaction.guild,
-      interaction.channel,
-      ventasData
-    );
-
-    // Crear embed
+    
+    const success = await sendToSheets(interaction.user, 'logout', interaction.guild, interaction.channel, ventasData);
+    
     const embed = new EmbedBuilder()
       .setTitle('🔴 Logout y Ventas Registrados')
-      .setDescription('**Jornada finalizada con reporte de ventas**')
       .setColor(0xff0000)
       .addFields([
-        { name: '👤 Usuario', value: `<@${interaction.user.id}>`, inline: true },
-        { name: '📝 Modelo', value: `\`${modelo}\``, inline: true },
-        { name: '💵 Monto Bruto', value: `\`$${montoBruto.toLocaleString('en-US', { minimumFractionDigits: 2 })}\``, inline: true },
-        { name: '💰 Monto Neto (80%)', value: `\`$${montoNeto.toLocaleString('en-US', { minimumFractionDigits: 2 })}\``, inline: true },
-        { name: '👥 Fans Suscritos', value: `\`${fansSuscritos.toLocaleString()}\``, inline: true },
-        { name: '⏰ Hora (Lima)', value: `\`${new Date().toLocaleString('es-PE', { timeZone: 'America/Lima' })}\``, inline: true }
-      ])
-      .setTimestamp();
-
+        { name: 'Usuario', value: interaction.user.username, inline: true },
+        { name: 'Modelo', value: modelo, inline: true },
+        { name: 'Monto Bruto', value: `$${monto.toFixed(2)}`, inline: true },
+        { name: 'Monto Neto', value: `$${montoNeto.toFixed(2)}`, inline: true },
+        { name: 'Fans', value: fans.toString(), inline: true },
+        { name: 'Hora', value: new Date().toLocaleString('es-PE', { timeZone: 'America/Lima' }), inline: true }
+      ]);
+    
     if (success) {
-      embed.setFooter({ text: '✅ Logout y ventas registrados en Google Sheets' });
+      embed.setFooter({ text: '✅ Guardado en Google Sheets' });
     } else {
-      embed.setFooter({ text: '⚠️ Error guardando en Google Sheets' });
+      embed.setFooter({ text: '⚠️ Error con Google Sheets' });
     }
-
+    
     await interaction.editReply({
-      content: success ? 
-        '🔴 **Logout registrado exitosamente con reporte de ventas**' : 
-        '⚠️ **Logout registrado localmente** (error con Google Sheets)',
+      content: '🔴 **Logout registrado exitosamente**',
       embeds: [embed]
     });
-
-    // Enviar por DM
-    try {
-      await interaction.user.send({
-        content: '🔴 **Logout y reporte de ventas registrado**',
-        embeds: [embed]
-      });
-    } catch (dmError) {
-      console.warn('⚠️ No se pudo enviar DM de logout');
-    }
-
-    console.log(`✅ Logout con ventas registrado para ${interaction.user.username}`);
-
-  } catch (error) {
-    console.error('❌ Error en modal de logout:', error);
     
+    // DM
     try {
-      if (interaction.replied || interaction.deferred) {
-        await interaction.editReply({
-          content: '❌ **Error procesando logout**. Inténtalo nuevamente.'
-        });
-      }
-    } catch (editError) {
-      console.error('❌ Error editando respuesta de modal:', editError);
+      await interaction.user.send({ content: '🔴 **Logout registrado**', embeds: [embed] });
+    } catch (dmError) {
+      console.warn('Could not send logout DM');
     }
+    
+  } catch (error) {
+    console.error('❌ Modal error:', error);
+    await interaction.editReply({ content: '❌ Error procesando logout' });
   }
 }
 
-async function sendToGoogleSheets(user, action, guild, channel, ventasData = null) {
-  const GOOGLE_SHEETS_WEBHOOK_URL = process.env.GOOGLE_SHEETS_WEBHOOK_URL;
-  
-  if (!GOOGLE_SHEETS_WEBHOOK_URL) {
-    console.warn('⚠️ Google Sheets URL no configurada');
+async function sendToSheets(user, action, guild, channel, ventasData = null) {
+  const url = process.env.GOOGLE_SHEETS_WEBHOOK_URL;
+  if (!url) {
+    console.warn('No Google Sheets URL configured');
     return false;
   }
-
+  
   try {
     const data = {
       timestamp: new Date().toISOString(),
       usuario: `${user.username}#${user.discriminator}`,
-      action: action,
-      servidor: guild?.name || 'DM/Privado',
-      canal: channel?.name || 'Mensaje Directo',
+      action,
+      servidor: guild?.name || 'DM',
+      canal: channel?.name || 'Direct',
       ...ventasData
     };
-
-    console.log(`📊 Enviando a Google Sheets: ${user.username} - ${action}`);
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
-
-    const response = await fetch(GOOGLE_SHEETS_WEBHOOK_URL, {
+    
+    console.log(`📊 Sending to sheets: ${user.username} - ${action}`);
+    
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
-      signal: controller.signal
+      signal: AbortSignal.timeout(5000)
     });
-
-    clearTimeout(timeoutId);
-
+    
     if (response.ok) {
       const result = await response.json();
-      if (result.result === 'success') {
-        console.log(`✅ Google Sheets actualizado: ${user.username} - ${action}`);
-        return true;
-      } else {
-        console.error('❌ Google Sheets rechazó los datos:', result);
-        return false;
-      }
-    } else {
-      console.error(`❌ Google Sheets HTTP ${response.status}`);
-      return false;
+      return result.result === 'success';
     }
-
+    
+    return false;
+    
   } catch (error) {
-    console.error('❌ Error enviando a Google Sheets:', error.message);
+    console.error('❌ Sheets error:', error);
     return false;
   }
 }
 
-async function showStatus(message) {
-  try {
-    const embed = new EmbedBuilder()
-      .setTitle('📊 Estado del Sistema de Asistencia')
-      .setDescription('Sistema funcionando en Netlify Functions')
-      .setColor(0x00ff00)
-      .addFields([
-        { name: '🤖 Bot', value: `✅ Conectado como ${client.user.tag}`, inline: true },
-        { name: '🏠 Servidores', value: `${client.guilds.cache.size}`, inline: true },
-        { name: '⏰ Uptime', value: `${Math.round((Date.now() - client.readyTimestamp) / 1000)}s`, inline: true },
-        { name: '📊 Google Sheets', value: process.env.GOOGLE_SHEETS_WEBHOOK_URL ? '✅ Configurado' : '❌ No configurado', inline: true },
-        { name: '🔗 Latencia', value: `${Math.round(client.ws.ping)}ms`, inline: true },
-        { name: '📝 Última actividad', value: `<t:${Math.floor(lastActivity / 1000)}:R>`, inline: true }
-      ])
-      .setTimestamp();
+function waitForReady(client, timeout = 10000) {
+  return new Promise((resolve, reject) => {
+    if (client.isReady()) {
+      resolve();
+      return;
+    }
+    
+    const timer = setTimeout(() => {
+      reject(new Error('Ready timeout'));
+    }, timeout);
+    
+    client.once('ready', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
 
-    await message.reply({ embeds: [embed] });
-  } catch (error) {
-    console.error('❌ Error en comando status:', error);
-    await message.reply('❌ Error mostrando el estado.').catch(() => {});
-  }
+function successResponse(data) {
+  return {
+    statusCode: 200,
+    headers: {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*'
+    },
+    body: JSON.stringify({
+      ...data,
+      timestamp: new Date().toISOString()
+    })
+  };
+}
+
+function errorResponse(error) {
+  return {
+    statusCode: 500,
+    headers: {
+      'Content-Type': 'application/json',
+      'Access-Control-Allow-Origin': '*'
+    },
+    body: JSON.stringify({
+      status: 'error',
+      error,
+      timestamp: new Date().toISOString()
+    })
+  };
 }
