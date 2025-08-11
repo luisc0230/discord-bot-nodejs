@@ -24,6 +24,11 @@
   status = 200
 
 [[redirects]]
+  from = "/interaction"
+  to = "/.netlify/functions/interaction"
+  status = 200
+
+[[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/:splat"
   status = 200
@@ -38,3 +43,7 @@
   to = "/.netlify/functions/start-bot"
   status = 200
 
+[[redirects]]
+  from = "/bot/alive"
+  to = "/.netlify/functions/keep-alive"
+  status = 200
