@@ -5,11 +5,8 @@
 [build.environment]
   NODE_VERSION = "18"
 
-[[functions]]
-  path = "netlify/functions/*"
-  node_bundler = "esbuild"
-
 [functions]
+  node_bundler = "esbuild"
   external_node_modules = ["discord.js", "axios", "node-fetch"]
 
 # Configuración para manejo de errores
